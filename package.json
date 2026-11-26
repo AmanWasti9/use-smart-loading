@@ -1,12 +1,14 @@
 {
   "name": "use-smart-loading",
-  "version": "0.1.0",
+  "version": "0.1.1",
+  "repository": {
+  "type": "git",
+  "url": "git+https://github.com/AmanWasti9/use-smart-loading.git"
+  },
+  "types": "dist/index.d.ts",
+  "files": ["dist", "!dist/**/*.test.*"],
   "description": "A smart React hook to manage loading UX without flicker",
   "main": "dist/index.js",
-  "types": "module",
-  "files": [
-    "dist"
-  ],
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "npm run build",
