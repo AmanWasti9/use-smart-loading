@@ -1,0 +1,35 @@
+name: CI
+on:
+  push:
+    branches: [master]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: ['20.x', '22.x', '24.x']
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm test
+      - name: Check that Node can import the build
+        run: node --input-type=module -e "const m = await import('use-smart-loading'); if (typeof m.useSmartLoading !== 'function') process.exit(1)"
+      - name: Check that Node can require the build
+        run: node --input-type=commonjs -e "if (typeof require('use-smart-loading').useSmartLoading !== 'function') process.exit(1)"
+      # Old React versions expose fewer named exports to Node's ES module loader.
+      - name: Check that Node can load the packed package with React 16.8
+        run: |
+          npm pack --pack-destination "$RUNNER_TEMP"
+          mkdir "$RUNNER_TEMP/react16" && cd "$RUNNER_TEMP/react16"
+          npm init -y
+          npm install "$RUNNER_TEMP"/use-smart-loading-*.tgz react@16.8.0
+          node --input-type=module -e "await import('use-smart-loading')"
