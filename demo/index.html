@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>use-smart-loading demo</title>
+    <style>
+      :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+      body { max-width: 760px; margin: 2rem auto; padding: 0 1rem; }
+      label { display: grid; grid-template-columns: 9rem 1fr 5rem; gap: 0.75rem; margin: 0.4rem 0; }
+      button { padding: 0.5rem 1rem; margin: 0.75rem 0.5rem 0.75rem 0; }
+      .panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+      section { border: 1px solid #8886; border-radius: 8px; padding: 1rem; }
+      .stage { height: 3rem; display: flex; align-items: center; gap: 0.5rem; }
+      .spinner { width: 1.25rem; height: 1.25rem; border: 3px solid #8884; border-top-color: #3b82f6;
+        border-radius: 50%; animation: spin 0.8s linear infinite; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      ol { min-height: 5rem; font-variant-numeric: tabular-nums; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

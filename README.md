@@ -29,7 +29,8 @@ Problems with this approach:
 - **Minimum loader duration** – once shown, the loader stays long enough to be seen
 - **Optional delay** – requests that finish within the delay never set `loading`
 - **Unmount handling** – a pending loader is cancelled, and `run()` promises still settle
-- **Small API** – one hook with `run` and `reset`, and no runtime dependencies
+- **Cancellation** – `runWithSignal` gives your request an `AbortSignal`
+- **Small API** – one hook, with no runtime dependencies
 
 ## When to use this hook
 
@@ -41,7 +42,6 @@ Problems with this approach:
 
 - For simple one-off effects that never re-run
 - If you already use a data-fetching library like React Query or SWR
-- If you need to cancel the request itself. The hook ignores stale results but does not abort your function
 
 ## Installation
 
@@ -120,7 +120,7 @@ try {
 **useSmartLoading(options?)**
 
 ```ts
-const { loading, isPending, data, error, run, reset } = useSmartLoading<T>({
+const { loading, isPending, data, error, run, runWithSignal, reset } = useSmartLoading<T>({
   minDuration: 500, // default
   delay: 0,         // default
 });
@@ -133,7 +133,8 @@ const { loading, isPending, data, error, run, reset } = useSmartLoading<T>({
 | `data` | `T \| null` | Result of the latest successful run. It is kept while a new run is in progress and when a run fails. |
 | `error` | `unknown` | Error from the latest run, if it failed. Cleared when a new run starts. |
 | `run(asyncFn)` | `(asyncFn: () => Promise<T>) => Promise<T>` | Calls your function. The promise resolves or rejects with that call's own result or error. |
-| `reset()` | `() => void` | Sets `loading` and `isPending` to `false`, clears `data` and `error`, cancels a pending loader, and ignores the results of earlier runs. |
+| `runWithSignal(asyncFn)` | `(asyncFn: (signal: AbortSignal) => Promise<T>) => Promise<T>` | Like `run`, and passes your function an `AbortSignal`. See [Cancelling requests](#cancelling-requests). |
+| `reset()` | `() => void` | Sets `loading` and `isPending` to `false`, clears `data` and `error`, cancels a pending loader, ignores the results of earlier runs, and aborts a `runWithSignal` request. |
 
 ## Options
 
@@ -180,6 +181,63 @@ With a delay:
 
 Changes to `minDuration` or `delay` apply to later calls to `run()`.
 
+## Cancelling requests
+
+`run()` ignores stale results but lets the request continue. Use `runWithSignal()` to stop it too, and pass the signal to `fetch` or any API that accepts one.
+
+```ts
+const search = (query: string) => {
+  runWithSignal(async (signal) => {
+    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`, { signal });
+    return res.json();
+  }).catch((err) => {
+    if (err.name === "AbortError") return; // replaced, reset or unmounted
+    console.error(err);
+  });
+};
+```
+
+An in-flight request is aborted when:
+
+- a newer `run()` or `runWithSignal()` starts
+- `reset()` is called
+- the component unmounts, or is hidden with React 19's `<Activity>`. React StrictMode's immediate remount does not abort it
+
+A request that has already finished is not aborted. An aborted call still **rejects** if your function does, as `fetch` does, so catch it. These aborts do not appear in `error`.
+
+`run()` calls your function with no arguments, so functions with optional parameters keep their defaults.
+
+## TypeScript
+
+With a type argument, `data` and the result of every call use that type:
+
+```ts
+const { data, run } = useSmartLoading<User[]>();
+// data: User[] | null
+```
+
+Without one, each call returns the type of its own function, and `data` is `unknown`:
+
+```ts
+const { run } = useSmartLoading();
+const count = await run(async () => 42); // number
+```
+
+The `SmartLoadingOptions` and `UseSmartLoadingResult<T>` types are exported.
+
+## Next.js
+
+With the App Router, call the hook from a Client Component: add `"use client"` at the top of that file.
+
+## Demo
+
+To compare the hook with a plain loading state, run this in a clone of the repository:
+
+```
+npm install
+npm run demo
+```
+
 ## Running Tests
 
 ```
@@ -194,6 +252,8 @@ The tests cover:
 - `reset()` and unmount during a request and during the `minDuration` wait
 - React StrictMode
 - `delay`, `minDuration` and `isPending`
+- Cancellation with `runWithSignal`
+- Server rendering of the idle state
 
 ## Changelog
 

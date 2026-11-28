@@ -11,10 +11,32 @@ export interface SmartLoadingOptions {
 }
 
 interface SmartLoadingState<T> {
+  /** Whether to show the loader. */
   loading: boolean;
+  /** True from run() until the latest run has finished and the loader is done. */
   isPending: boolean;
+  /** Result of the latest successful run. */
   data: T | null;
+  /** Error from the latest run, if it failed. */
   error: unknown;
+}
+
+// With no type argument on the hook (T is unknown), each call returns the type
+// of its own function. With one, calls return T, even if the function is
+// typed as returning any.
+type RunResult<T, R> = Promise<unknown extends T ? R : T>;
+// Including T lets TypeScript infer inside `new Promise(...)` as before.
+type RunInput<T, R> = Promise<R | (unknown extends T ? never : T)>;
+
+export interface UseSmartLoadingResult<T> extends SmartLoadingState<T> {
+  /** Calls your function. Resolves or rejects with that call's own outcome. */
+  run: <R extends T = T>(asyncFn: () => RunInput<T, R>) => RunResult<T, R>;
+  /** Like run(), and aborts the signal if the request is no longer needed. */
+  runWithSignal: <R extends T = T>(
+    asyncFn: (signal: AbortSignal) => RunInput<T, R>
+  ) => RunResult<T, R>;
+  /** Clears the state and ignores the results of earlier runs. */
+  reset: () => void;
 }
 
 const initialState: SmartLoadingState<never> = {
@@ -26,7 +48,7 @@ const initialState: SmartLoadingState<never> = {
 
 export function useSmartLoading<T = unknown>(
   options: SmartLoadingOptions = {}
-) {
+): UseSmartLoadingResult<T> {
   const { minDuration = 500, delay = 0 } = options;
 
   const [state, setState] = useState<SmartLoadingState<T>>(initialState);
@@ -43,6 +65,15 @@ export function useSmartLoading<T = unknown>(
 
   // Ends the current minDuration wait early, so its run() promise can settle.
   const releaseHoldRef = useRef<(() => void) | null>(null);
+
+  // Set only while a runWithSignal() request is still in flight.
+  const controllerRef = useRef<AbortController | null>(null);
+
+  const abortRequest = useCallback((next: AbortController | null = null) => {
+    const previous = controllerRef.current;
+    controllerRef.current = next;
+    previous?.abort();
+  }, []);
 
   const commit = useCallback((patch: Partial<SmartLoadingState<T>>) => {
     const previous = stateRef.current;
@@ -90,14 +121,31 @@ export function useSmartLoading<T = unknown>(
       mountedRef.current = false;
       clearTimeout(delayTimerRef.current);
       releaseHoldRef.current?.();
-    };
-  }, [startDelayTimer]);
 
-  const run = useCallback(
-    async (asyncFn: () => Promise<T>): Promise<T> => {
+      // Wait a microtask: if React runs the effect again right away
+      // (StrictMode), the component is still live and nothing is aborted.
+      void Promise.resolve().then(() => {
+        if (mountedRef.current || !controllerRef.current) return;
+
+        // The run is stale from here on, so the abort is not reported as an
+        // error if the component is shown again (<Activity>, for example).
+        requestIdRef.current++;
+        cancelDelayedLoader();
+        commit({ loading: false, isPending: false });
+        abortRequest();
+      });
+    };
+  }, [startDelayTimer, cancelDelayedLoader, commit, abortRequest]);
+
+  const execute = useCallback(
+    async (
+      asyncFn: () => Promise<T>,
+      controller: AbortController | null
+    ): Promise<T> => {
       const id = ++requestIdRef.current;
       const startedAt = Date.now();
       releaseHoldRef.current?.();
+      abortRequest(controller);
 
       if (delay > 0 && !stateRef.current.loading) {
         commit({ isPending: true, error: null });
@@ -139,26 +187,56 @@ export function useSmartLoading<T = unknown>(
         commit({ ...outcome, loading: false, isPending: false });
       };
 
+      // A finished request must not be aborted later: its signal may still
+      // control something the caller is using, such as a response body.
+      const forgetController = () => {
+        if (controllerRef.current === controller) controllerRef.current = null;
+      };
+
       let result: T;
       try {
         result = await asyncFn();
       } catch (err) {
+        forgetController();
         await finish({ error: err });
         throw err;
       }
+      forgetController();
       await finish({ data: result });
       return result;
     },
-    [minDuration, delay, commit, showLoader, startDelayTimer, cancelDelayedLoader]
+    [
+      minDuration,
+      delay,
+      commit,
+      showLoader,
+      startDelayTimer,
+      cancelDelayedLoader,
+      abortRequest,
+    ]
   );
+
+  const run = useCallback(
+    (asyncFn: () => Promise<T>): Promise<T> => execute(asyncFn, null),
+    [execute]
+  ) as UseSmartLoadingResult<T>["run"];
+
+  const runWithSignal = useCallback(
+    (asyncFn: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+      const controller = new AbortController();
+      return execute(() => asyncFn(controller.signal), controller);
+    },
+    [execute]
+  ) as UseSmartLoadingResult<T>["runWithSignal"];
 
   const reset = useCallback(() => {
     // Makes every earlier run stale.
     requestIdRef.current++;
     cancelDelayedLoader();
     releaseHoldRef.current?.();
+    abortRequest();
     commit(initialState);
-  }, [cancelDelayedLoader, commit]);
+  }, [cancelDelayedLoader, abortRequest, commit]);
 
-  return { ...state, run, reset };
+  return { ...state, run, runWithSignal, reset };
 }

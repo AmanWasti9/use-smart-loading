@@ -1,0 +1,41 @@
+name: Publish to npm
+
+# Runs when you publish a GitHub release tagged v<version>, such as v0.2.0.
+#
+# One-time setup on npmjs.com: open the package's Settings, add a "Trusted
+# Publisher" of type GitHub Actions, and enter the repository owner, the
+# repository name and this workflow's file name (publish-npm.yml).
+# No npm token or repository secret is needed.
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # lets npm verify this workflow and sign the provenance
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24.x'
+          registry-url: 'https://registry.npmjs.org'
+      # Trusted publishing needs npm 11.5.1 or later.
+      - run: npm install --global npm@^11.5.1
+      - name: Check that the release tag matches package.json
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          expected="v$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$expected" ]; then
+            echo "Release tag $TAG does not match $expected"
+            exit 1
+          fi
+      - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm test
+      # Prereleases go to the "next" tag so they do not become "latest".
+      - run: npm publish --provenance --access public --tag ${{ github.event.release.prerelease && 'next' || 'latest' }}
